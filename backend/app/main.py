@@ -14,14 +14,15 @@ from .scoring import add_effort, totals, skill_state, role_tier, award_validated
 from .ai import rate_evidence
 
 app=FastAPI(title="IEEE Impact++ Growth & Evidence API", version="1.0.0")
-origins=[x.strip() for x in settings.frontend_origins.split(",") if x.strip()]
+origins = [
+    "https://bunnie114.github.io",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://bunnie114.github.io",
-        "http://localhost:5500",
-        "http://127.0.0.1:5500"
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -166,9 +167,11 @@ def submit_evidence(move_id:str=Form(...),skill_id:str=Form(...),move_type:str=F
     artifact_url:str|None=Form(None),file:UploadFile|None=File(None),
     db:Session=Depends(get_db),u:User=Depends(current_user)):
     if artifact_type not in ("summary","link","file"): raise HTTPException(400,"Invalid artifact type.")
-    file_path=None; extracted=""
-    if file:
-        file_path,extracted=save_upload(file)
+    file_path = None
+extracted = ""
+
+if file and file.filename:
+    file_path, extracted = save_upload(file)
     if artifact_type=="link" and not artifact_url: raise HTTPException(400,"A URL is required.")
     if artifact_type=="file" and not file_path: raise HTTPException(400,"Please attach a file.")
     full_summary=(summary+"\n\nExtracted file text:\n"+extracted).strip()
