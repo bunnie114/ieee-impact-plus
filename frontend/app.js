@@ -1,6 +1,7 @@
 const API = (window.IMPACT_API_BASE || "").replace(/\/$/,"");
 const $ = (s)=>document.querySelector(s);
 let token=localStorage.getItem("impact_token"), me=null, catalog=null, dashboard=null, authMode="login";
+let selectedMove=null;
 const api=async(path,opts={})=>{
   const headers={...(opts.headers||{})};
   if(token) headers.Authorization=`Bearer ${token}`;
@@ -42,10 +43,24 @@ async function badgesPage(){const b=await api("/badges");return `${pageTitle("Ba
 async function opportunitiesPage(){const rows=await api("/opportunities");return `${pageTitle("Opportunities Unlocked","Opportunity status is based on validated capability, never effort points.")}<div class="grid two">${rows.map(o=>`<div class="card"><div class="move-card"><h3>${o.name}</h3><span class="pill ${o.unlocked?"green":""}">${o.unlocked?"Unlocked":"Locked"}</span></div><p>${o.description}</p><p class="muted small">Required tier: ${o.tier} · Fulfillment: ${o.fulfillment}</p>${o.unlocked?`<span class="pill green">${o.fulfillment==="real"?"Available in MVP":o.fulfillment==="seeded"?"Seeded demonstration content":"Display-only fulfillment"}</span>`:""}</div>`).join("")}</div>`}
 function profilePage(){return `${pageTitle("Profile & Settings","Manage your student profile.")}<div class="card"><h2>${escapeHtml(me.name)}</h2><p>${escapeHtml(me.email)}</p><p class="muted">Career goal: ${dashboard.career.name}</p><p class="muted small">This MVP currently supports one student-facing role. Peer reviewer activity is simulated and labelled as such.</p><button class="secondary" id="logout2">Sign out</button></div>`}
 function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function applyMove(form,id){
+  const m=((catalog&&catalog.moves)||[]).find(x=>x.id===id);
+  if(!m||!form)return null;
+  const set=(name,val)=>{const el=form.elements[name];if(el&&[...el.options].some(o=>o.value===val))el.value=val};
+  set("move_id",m.id);set("skill_id",m.skill);set("move_type",m.type);set("difficulty",m.difficulty);
+  return m;
+}
 function bindPage(){const cs=$("#save-career");if(cs)cs.onclick=async()=>{try{await api("/career",{method:"PUT",body:JSON.stringify({career_id:$("#career-select").value})});await start();notice("Career goal updated.")}catch(e){notice(e.message)}};
 const type=$("#artifact-type");if(type)type.onchange=()=>{$("#url-label").classList.toggle("hidden",type.value!=="link");$("#file-label").classList.toggle("hidden",type.value!=="file")};
 const form=$("#evidence-form");if(form)form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);if(!(fd.get("file")&&fd.get("file").name))fd.delete("file");try{const result=await api("/evidence",{method:"POST",body:fd});notice(`Evidence evaluated: ${result.status}.`);await render()}catch(err){notice(err.message);await render()}};
-document.querySelectorAll("[data-submit-move]").forEach(b=>b.onclick=()=>{location.hash="#evidence";setTimeout(()=>{const f=$("#evidence-form");if(f)f.elements.move_id.value=b.dataset.submitMove},100)});
+if(form){
+  form.elements.move_id.onchange=()=>applyMove(form,form.elements.move_id.value);
+  if(selectedMove){
+    const m=applyMove(form,selectedMove);selectedMove=null;
+    if(m){notice(`Submitting evidence for: ${m.title}`);form.scrollIntoView({block:"start"});form.elements.summary.focus({preventScroll:true})}
+  }
+}
+document.querySelectorAll("[data-submit-move]").forEach(b=>b.onclick=()=>{selectedMove=b.dataset.submitMove;if(location.hash==="#evidence")render();else location.hash="#evidence"});
 const l=$("#logout2");if(l)l.onclick=$("#logout").onclick;
 if($("#home-badges"))api("/badges").then(b=>$("#home-badges").innerHTML=b.slice(0,4).map(x=>`<div class="badge-card ${x.rarity==="Rare"?"rare":""}"><div class="badge-icon">${x.earned?"🏅":"🔒"}</div><b>${x.name}</b><div><span class="rarity ${x.rarity}">${x.rarity}</span></div><small class="muted">${x.earned?"Earned":"In progress"}</small></div>`).join("")).catch(()=>{});
 }
