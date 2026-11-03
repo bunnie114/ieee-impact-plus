@@ -1,9 +1,40 @@
 import json
+import time
 from google import genai
 from google.genai import types
 from .config import settings
 
 RUBRIC = ["relevance", "completeness", "quality", "clarity"]
+
+# Tried in order. Each model gets a few attempts on transient errors.
+FALLBACK_MODELS = ["gemini-2.5-flash-lite"]
+TRANSIENT_CODES = (429, 500, 503, 504)
+
+
+def _generate(client, prompt):
+    models = [settings.gemini_model] + [m for m in FALLBACK_MODELS if m != settings.gemini_model]
+    last_err = None
+    for model in models:
+        for attempt in range(3):
+            try:
+                return client.models.generate_content(
+                    model=model,
+                    contents=[
+                        "You are a careful evidence assessor. Never fabricate artifact inspection.",
+                        prompt,
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0,
+                        response_mime_type="application/json",
+                    ),
+                )
+            except Exception as e:
+                last_err = e
+                if getattr(e, "code", None) not in TRANSIENT_CODES:
+                    raise  # not a temporary error, so retrying won't help
+                time.sleep(2 ** attempt)  # waits 1s, 2s, 4s
+    raise last_err
+
 
 def rate_evidence(summary: str, skill_name: str, artifact_type: str, artifact_url: str | None):
     if not settings.gemini_api_key:
@@ -27,17 +58,7 @@ Return only JSON with keys: criteria (object with four 0..1 values), overall_sco
 confidence (0..1), suggested_difficulty (easy|moderate|hard), feedback (string).
 Be constructive and specific.'''
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=[
-            "You are a careful evidence assessor. Never fabricate artifact inspection.",
-            prompt,
-        ],
-        config=types.GenerateContentConfig(
-            temperature=0,
-            response_mime_type="application/json",
-        ),
-    )
+    response = _generate(client, prompt)
 
     if not response.text:
         raise ValueError("Gemini returned an empty response.")
