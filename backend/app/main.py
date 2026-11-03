@@ -102,7 +102,7 @@ def moves(db:Session=Depends(get_db),u:User=Depends(current_user)):
     return sorted(MOVES,key=lambda m:(gaps.get(m["skill"],0), m["difficulty"]=="hard"))
 
 
-_
+
 def save_upload(upload: UploadFile):
     allowed_extensions = {
         ".pdf", ".docx", ".txt", ".png",
