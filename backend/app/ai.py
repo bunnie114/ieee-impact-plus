@@ -6,13 +6,14 @@ from .config import settings
 
 RUBRIC = ["relevance", "completeness", "quality", "clarity"]
 
-# Tried in order. Each model gets a few attempts on transient errors.
-FALLBACK_MODELS = ["gemini-2.5-flash-lite"]
 TRANSIENT_CODES = (429, 500, 503, 504)
+MODEL_UNAVAILABLE = 404  # retired or unknown model: skip to the fallback, don't retry
 
 
 def _generate(client, prompt):
-    models = [settings.gemini_model] + [m for m in FALLBACK_MODELS if m != settings.gemini_model]
+    models = [settings.gemini_model]
+    if settings.gemini_fallback_model and settings.gemini_fallback_model != settings.gemini_model:
+        models.append(settings.gemini_fallback_model)
     last_err = None
     for model in models:
         for attempt in range(3):
@@ -30,7 +31,10 @@ def _generate(client, prompt):
                 )
             except Exception as e:
                 last_err = e
-                if getattr(e, "code", None) not in TRANSIENT_CODES:
+                code = getattr(e, "code", None)
+                if code == MODEL_UNAVAILABLE:
+                    break  # try the next model, if there is one
+                if code not in TRANSIENT_CODES:
                     raise  # not a temporary error, so retrying won't help
                 time.sleep(2 ** attempt)  # waits 1s, 2s, 4s
     raise last_err
