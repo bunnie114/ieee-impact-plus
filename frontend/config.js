@@ -1,3 +1,3 @@
-// Set this to your deployed FastAPI URL before publishing to GitHub Pages.
-window.IMPACT_API_BASE = "http://127.0.0.1:8000";
-window.IMPACT_BASE_PATH = "/";
+// Connect the frontend to the deployed Render backend.
+window.IMPACT_API_BASE = "hhttps://ieee-impact-plus-api.onrender.com/";
+window.IMPACT_BASE_PATH = "/ieee-impact-plus/";
