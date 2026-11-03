@@ -11,7 +11,10 @@ from .schemas import RegisterIn, LoginIn, CareerIn, EvidenceIn
 from .auth import hash_password, verify_password, make_token, current_user
 from .catalog import CAREERS, MOVES, OPPORTUNITIES
 from .scoring import add_effort, totals, skill_state, role_tier, award_validated, update_unlocks
-from .ai import rate_evidence
+import logging
+from .ai import rate_evidence, AIBusyError, BUSY_MESSAGE
+
+log=logging.getLogger("impact")
 
 app=FastAPI(title="IEEE Impact++ Growth & Evidence API", version="1.0.0")
 origins = [
@@ -198,10 +201,13 @@ def submit_evidence(move_id:str=Form(...),skill_id:str=Form(...),move_type:str=F
         return evidence_payload(ev,db)
     except Exception as ex:
         db.rollback()  # discard any half-written review/score rows
+        busy=isinstance(ex,AIBusyError)
+        message=BUSY_MESSAGE if busy else "Your evidence was saved, but AI evaluation couldn't be completed. Please try again later."
+        log.warning("AI evaluation failed for evidence %s: %r",ev_id,ex)  # full detail stays in server logs
         ev=db.get(Evidence,ev_id)
-        ev.status="ai_error"; ev.ai_feedback=str(ex)[:1000]
+        ev.status="ai_error"; ev.ai_feedback=message
         db.commit()
-        raise HTTPException(502,f"Evidence saved, but AI evaluation failed: {str(ex)}")
+        raise HTTPException(503 if busy else 502,message)
 
 def evidence_payload(ev,db):
     reviews=db.scalars(select(Review).where(Review.evidence_id==ev.id)).all()

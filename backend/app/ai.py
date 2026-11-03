@@ -8,6 +8,13 @@ RUBRIC = ["relevance", "completeness", "quality", "clarity"]
 
 TRANSIENT_CODES = (429, 500, 503, 504)
 MODEL_UNAVAILABLE = 404  # retired or unknown model: skip to the fallback, don't retry
+RETRIES_PER_MODEL = 3    # first try + 2 retries (waits 1s then 2s)
+
+BUSY_MESSAGE = "The AI reviewer is busy right now. Your evidence was saved - please try again shortly."
+
+
+class AIBusyError(Exception):
+    """Every model stayed overloaded/unavailable after retries (temporary)."""
 
 
 def _generate(client, prompt):
@@ -16,7 +23,7 @@ def _generate(client, prompt):
         models.append(settings.gemini_fallback_model)
     last_err = None
     for model in models:
-        for attempt in range(3):
+        for attempt in range(RETRIES_PER_MODEL):
             try:
                 return client.models.generate_content(
                     model=model,
@@ -33,10 +40,13 @@ def _generate(client, prompt):
                 last_err = e
                 code = getattr(e, "code", None)
                 if code == MODEL_UNAVAILABLE:
-                    break  # try the next model, if there is one
+                    break  # retired/unknown model: go straight to the next one
                 if code not in TRANSIENT_CODES:
-                    raise  # not a temporary error, so retrying won't help
-                time.sleep(2 ** attempt)  # waits 1s, 2s, 4s
+                    raise  # bad key, bad request, etc.: retrying won't help
+                if attempt < RETRIES_PER_MODEL - 1:
+                    time.sleep(2 ** attempt)  # backoff: 1s, then 2s
+    if getattr(last_err, "code", None) in TRANSIENT_CODES:
+        raise AIBusyError(BUSY_MESSAGE) from last_err
     raise last_err
 
 
