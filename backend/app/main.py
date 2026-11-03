@@ -167,11 +167,10 @@ def submit_evidence(move_id:str=Form(...),skill_id:str=Form(...),move_type:str=F
     artifact_url:str|None=Form(None),file:UploadFile|None=File(None),
     db:Session=Depends(get_db),u:User=Depends(current_user)):
     if artifact_type not in ("summary","link","file"): raise HTTPException(400,"Invalid artifact type.")
-    file_path = None
-extracted = ""
-
-if file and file.filename:
-    file_path, extracted = save_upload(file)
+    file_path=None; extracted=""
+    # Browsers send an empty file part (filename="") when no file is chosen.
+    if file is not None and file.filename:
+        file_path,extracted=save_upload(file)
     if artifact_type=="link" and not artifact_url: raise HTTPException(400,"A URL is required.")
     if artifact_type=="file" and not file_path: raise HTTPException(400,"Please attach a file.")
     full_summary=(summary+"\n\nExtracted file text:\n"+extracted).strip()
@@ -179,6 +178,8 @@ if file and file.filename:
       artifact_type=artifact_type,artifact_url=artifact_url,file_path=file_path,summary=full_summary,status="submitted")
     db.add(ev); db.flush()
     add_effort(db,u.id,3,"evidence_submission",ev.id,skill_id)
+    ev_id=ev.id
+    db.commit()  # persist the submission first so it always shows in history
     try:
         skill_name=next((s["name"] for s in CAREERS[u.career_id]["skills"] if s["id"]==skill_id),skill_id)
         ai=rate_evidence(full_summary,skill_name,artifact_type,artifact_url)
@@ -196,6 +197,8 @@ if file and file.filename:
         db.commit(); db.refresh(ev)
         return evidence_payload(ev,db)
     except Exception as ex:
+        db.rollback()  # discard any half-written review/score rows
+        ev=db.get(Evidence,ev_id)
         ev.status="ai_error"; ev.ai_feedback=str(ex)[:1000]
         db.commit()
         raise HTTPException(502,f"Evidence saved, but AI evaluation failed: {str(ex)}")
