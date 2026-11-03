@@ -7,47 +7,46 @@ from .config import settings
 RUBRIC = ["relevance", "completeness", "quality", "clarity"]
 
 TRANSIENT_CODES = (429, 500, 503, 504)
-MODEL_UNAVAILABLE = 404  # retired or unknown model: skip to the fallback, don't retry
-RETRIES_PER_MODEL = 3    # first try + 2 retries (waits 1s then 2s)
+RETRIES = 3  # first try + 2 quick retries (waits 1s, then 2s). Set to 1 for no automatic retries.
 
 BUSY_MESSAGE = "The AI reviewer is busy right now. Your evidence was saved - please try again shortly."
 
 
 class AIBusyError(Exception):
-    """Every model stayed overloaded/unavailable after retries (temporary)."""
+    """The AI service stayed overloaded/unavailable after a few quick retries (temporary)."""
+
+
+def _model_name():
+    # Tolerate common copy/paste slips in the env var: quotes, spaces, or "GEMINI_MODEL=" in the value.
+    name = (settings.gemini_model or "").strip().strip("\"'").strip()
+    if "=" in name:
+        name = name.split("=")[-1].strip().strip("\"'").strip()
+    return name or "gemini-3.8-flash"
 
 
 def _generate(client, prompt):
-    models = [settings.gemini_model]
-    if settings.gemini_fallback_model and settings.gemini_fallback_model != settings.gemini_model:
-        models.append(settings.gemini_fallback_model)
+    model = _model_name()
     last_err = None
-    for model in models:
-        for attempt in range(RETRIES_PER_MODEL):
-            try:
-                return client.models.generate_content(
-                    model=model,
-                    contents=[
-                        "You are a careful evidence assessor. Never fabricate artifact inspection.",
-                        prompt,
-                    ],
-                    config=types.GenerateContentConfig(
-                        temperature=0,
-                        response_mime_type="application/json",
-                    ),
-                )
-            except Exception as e:
-                last_err = e
-                code = getattr(e, "code", None)
-                if code == MODEL_UNAVAILABLE:
-                    break  # retired/unknown model: go straight to the next one
-                if code not in TRANSIENT_CODES:
-                    raise  # bad key, bad request, etc.: retrying won't help
-                if attempt < RETRIES_PER_MODEL - 1:
-                    time.sleep(2 ** attempt)  # backoff: 1s, then 2s
-    if getattr(last_err, "code", None) in TRANSIENT_CODES:
-        raise AIBusyError(BUSY_MESSAGE) from last_err
-    raise last_err
+    for attempt in range(RETRIES):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=[
+                    "You are a careful evidence assessor. Never fabricate artifact inspection.",
+                    prompt,
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    response_mime_type="application/json",
+                ),
+            )
+        except Exception as e:
+            last_err = e
+            if getattr(e, "code", None) not in TRANSIENT_CODES:
+                raise  # bad key, bad model name, bad request: retrying won't help
+            if attempt < RETRIES - 1:
+                time.sleep(2 ** attempt)  # backoff: 1s, then 2s
+    raise AIBusyError(BUSY_MESSAGE) from last_err
 
 
 def rate_evidence(summary: str, skill_name: str, artifact_type: str, artifact_url: str | None):

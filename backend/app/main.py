@@ -176,16 +176,22 @@ def submit_evidence(move_id:str=Form(...),skill_id:str=Form(...),move_type:str=F
         file_path,extracted=save_upload(file)
     if artifact_type=="link" and not artifact_url: raise HTTPException(400,"A URL is required.")
     if artifact_type=="file" and not file_path: raise HTTPException(400,"Please attach a file.")
-    full_summary=(summary+"\n\nExtracted file text:\n"+extracted).strip()
+    full_summary=(summary+("\n\nExtracted file text:\n"+extracted if extracted else "")).strip()
     ev=Evidence(user_id=u.id,move_id=move_id,skill_id=skill_id,move_type=move_type,difficulty=difficulty,
       artifact_type=artifact_type,artifact_url=artifact_url,file_path=file_path,summary=full_summary,status="submitted")
     db.add(ev); db.flush()
     add_effort(db,u.id,3,"evidence_submission",ev.id,skill_id)
-    ev_id=ev.id
     db.commit()  # persist the submission first so it always shows in history
+    return grade_evidence(db,u,ev)
+
+def grade_evidence(db,u,ev):
+    """Run AI grading + simulated review for a saved evidence row.
+    If the AI is unavailable the row stays as 'ai_error' and can be retried via /evidence/{id}/regrade."""
+    ev_id=ev.id
     try:
-        skill_name=next((s["name"] for s in CAREERS[u.career_id]["skills"] if s["id"]==skill_id),skill_id)
-        ai=rate_evidence(full_summary,skill_name,artifact_type,artifact_url)
+        difficulty=ev.difficulty
+        skill_name=next((s["name"] for s in CAREERS[u.career_id]["skills"] if s["id"]==ev.skill_id),ev.skill_id)
+        ai=rate_evidence(ev.summary,skill_name,ev.artifact_type,ev.artifact_url)
         ev.ai_score=ai["overall_score"]; ev.ai_confidence=ai["confidence"]
         ev.ai_feedback=ai["feedback"]; ev.ai_criteria=json.dumps(ai["criteria"])
         ev.status="in_review"
@@ -208,6 +214,13 @@ def submit_evidence(move_id:str=Form(...),skill_id:str=Form(...),move_type:str=F
         ev.status="ai_error"; ev.ai_feedback=message
         db.commit()
         raise HTTPException(503 if busy else 502,message)
+
+@app.post("/evidence/{evidence_id}/regrade")
+def regrade_evidence(evidence_id:int,db:Session=Depends(get_db),u:User=Depends(current_user)):
+    ev=db.get(Evidence,evidence_id)
+    if not ev or ev.user_id!=u.id: raise HTTPException(404,"Evidence not found.")
+    if ev.status!="ai_error": raise HTTPException(409,"This evidence has already been graded.")
+    return grade_evidence(db,u,ev)
 
 def evidence_payload(ev,db):
     reviews=db.scalars(select(Review).where(Review.evidence_id==ev.id)).all()
