@@ -101,32 +101,62 @@ def moves(db:Session=Depends(get_db),u:User=Depends(current_user)):
     gaps={s["id"]:s["points"] for s in skills}
     return sorted(MOVES,key=lambda m:(gaps.get(m["skill"],0), m["difficulty"]=="hard"))
 
-def save_upload(upload:UploadFile):
-    allowed={"application/pdf","image/png","image/jpeg","image/webp",
-             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-             "text/plain"}
-    if upload.content_type not in allowed: raise HTTPException(415,"Supported uploads: PDF, DOCX, PNG, JPG, WEBP, and TXT.")
-    data=upload.file.read()
-    if len(data)>10*1024*1024: raise HTTPException(413,"File must be 10 MB or smaller.")
-    folder=Path(settings.upload_dir); folder.mkdir(parents=True,exist_ok=True)
-    suffix=Path(upload.filename or "artifact").suffix[:12]
-    path=folder/f"{uuid.uuid4().hex}{suffix}"
+
+def save_upload(upload: UploadFile):
+    allowed_extensions = {
+        ".pdf", ".docx", ".txt", ".png",
+        ".jpg", ".jpeg", ".webp"
+    }
+
+    filename = upload.filename or "artifact"
+    suffix = Path(filename).suffix.lower()
+
+    if suffix not in allowed_extensions:
+        raise HTTPException(
+            415,
+            "Supported uploads: PDF, DOCX, PNG, JPG, WEBP, and TXT."
+        )
+
+    data = upload.file.read()
+
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "File must be 10 MB or smaller.")
+
+    if not data:
+        raise HTTPException(400, "The uploaded file is empty.")
+
+    folder = Path(settings.upload_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    path = folder / f"{uuid.uuid4().hex}{suffix}"
     path.write_bytes(data)
-    extracted=""
+
+    extracted = ""
+
     try:
-        if suffix.lower()==".pdf":
+        import io
+
+        if suffix == ".pdf":
             from pypdf import PdfReader
-            import io
-            extracted=" ".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)[:12000]
-        elif suffix.lower()==".docx":
+            extracted = " ".join(
+                p.extract_text() or ""
+                for p in PdfReader(io.BytesIO(data)).pages
+            )[:12000]
+
+        elif suffix == ".docx":
             from docx import Document
-            import io
-            extracted="\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)[:12000]
-        elif suffix.lower()==".txt":
-            extracted=data.decode("utf-8",errors="ignore")[:12000]
+            extracted = "\n".join(
+                p.text for p in Document(io.BytesIO(data)).paragraphs
+            )[:12000]
+
+        elif suffix == ".txt":
+            extracted = data.decode("utf-8", errors="ignore")[:12000]
+
     except Exception:
-        extracted=""
-    return str(path),extracted
+        extracted = ""
+
+    return str(path), extracted
+
 
 @app.post("/evidence")
 def submit_evidence(move_id:str=Form(...),skill_id:str=Form(...),move_type:str=Form(...),
